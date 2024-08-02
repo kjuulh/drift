@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DriftError {
-    #[error("job failed with inner error")]
+    #[error("job failed with inner error: {0}")]
     JobError(#[source] anyhow::Error),
 }
 
