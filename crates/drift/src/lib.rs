@@ -5,8 +5,11 @@ use std::future::Future;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum DriftError {}
+#[derive(Debug, thiserror::Error)]
+pub enum DriftError {
+    #[error("job failed with inner error")]
+    JobError(#[from] anyhow::Error),
+}
 
 pub fn schedule<F, Fut>(interval: Duration, func: F) -> CancellationToken
 where
