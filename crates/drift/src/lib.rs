@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, thiserror::Error)]
 pub enum DriftError {
     #[error("job failed with inner error")]
-    JobError(#[from] anyhow::Error),
+    JobError(#[source] anyhow::Error),
 }
 
 pub fn schedule<F, Fut>(interval: Duration, func: F) -> CancellationToken
