@@ -1,6 +1,8 @@
 [package]
-name = "drift"
+name = "nodrift"
 version.workspace = true
+description = "no Drift is an application for scheduling recurring jobs"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
