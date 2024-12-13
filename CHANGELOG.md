@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2024-12-13
+
+### Added
+- allow job to start immediately
+- rename and publish
+
+### Fixed
+- test can now run at least 2 times, initial and then via. delay
+- with child token as well
+
 ## [0.2.0] - 2024-08-02
 
 ### Added
