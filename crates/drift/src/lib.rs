@@ -203,7 +203,7 @@ mod tests {
         assert!(token.is_cancelled());
 
         let counter = drifter.counter.lock().unwrap();
-        assert_eq!(*counter, 1);
+        assert_eq!(*counter, 2);
 
         Ok(())
     }
