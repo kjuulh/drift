@@ -37,6 +37,7 @@ where
             let start = std::time::Instant::now();
 
             tracing::debug!("running job");
+            let child_token = cancellation_token.child_token();
             if let Err(e) = drifter.execute(child_token).await {
                 tracing::error!("drift job failed with error: {}, stopping routine", e);
                 cancellation_token.cancel();
