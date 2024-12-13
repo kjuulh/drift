@@ -34,6 +34,21 @@ where
 
         async move {
             let mut wait = interval;
+            let start = std::time::Instant::now();
+
+            tracing::debug!("running job");
+            if let Err(e) = drifter.execute(child_token).await {
+                tracing::error!("drift job failed with error: {}, stopping routine", e);
+                cancellation_token.cancel();
+            }
+
+            let elapsed = start.elapsed();
+            wait = interval.saturating_sub(elapsed);
+            tracing::debug!(
+                "job took: {}ms, waiting: {}ms for next run",
+                elapsed.as_millis(),
+                wait.as_millis()
+            );
 
             loop {
                 let child_token = cancellation_token.child_token();
