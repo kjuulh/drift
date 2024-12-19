@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2024-12-19
+
+### Fixed
+- *(deps)* update rust crate thiserror to v2.0.8
+
+### Other
+- *(deps)* update all dependencies
+- *(deps)* update rust crate tracing to v0.1.41
+- Configure Renovate (#4)
+
 ## [0.3.0] - 2024-12-13
 
 ### Added
