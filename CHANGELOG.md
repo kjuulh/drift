@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-03-27
+
+### Fixed
+- time formatting
+
 ## [0.3.1] - 2025-03-27
 
 ### Added
