@@ -9,6 +9,7 @@ edition = "2021"
 anyhow.workspace = true
 async-trait = "0.1.81"
 chrono = "0.4.40"
+cron = "0.15.0"
 thiserror = "2.0.0"
 tokio.workspace = true
 tokio-util = "0.7.11"
