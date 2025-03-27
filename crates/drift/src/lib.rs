@@ -53,8 +53,7 @@ where
 
                         tracing::debug!("running job");
                         if let Err(e) = drifter.execute(child_token).await {
-                            tracing::error!("drift job failed with error: {}, stopping routine", e);
-                            cancellation_token.cancel();
+                            tracing::error!("drift job failed with error: {}", e);
                             continue
                         }
 
