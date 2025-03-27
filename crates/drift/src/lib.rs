@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
+use anyhow::Context;
 use async_trait::async_trait;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeDelta};
 use std::future::Future;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
@@ -76,9 +77,9 @@ where
                         wait = interval.saturating_sub(elapsed);
 
                         let now: DateTime<Local> = Local::now();
-                        let next: Option<DateTime<Local>> = std::time::SystemTime::now().checked_add(wait).map(|next| next.into());
+                        let next: Option<DateTime<Local>> = now.checked_add_signed(TimeDelta::from_std(wait).expect("to be able to convert duration into time delta"));
 
-                        tracing::debug!(?now, ?next, "job took: {}ms, waiting: {}ms for next run", elapsed.as_millis(), wait.as_millis() );
+                        tracing::debug!(now=now.to_string(), next=next.map(|n| n.to_string()), "job took: {}ms, waiting: {}ms for next run", elapsed.as_millis(), wait.as_millis() );
                     }
 
                 }
