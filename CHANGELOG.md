@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2025-03-27
+
+### Added
+- add cron
+
 ## [0.3.3] - 2025-03-27
 
 ### Added
