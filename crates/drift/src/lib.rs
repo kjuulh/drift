@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Local};
 use std::future::Future;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
@@ -33,7 +34,6 @@ where
         let drifter = drifter.clone();
 
         async move {
-            let mut wait = interval;
             let start = std::time::Instant::now();
 
             tracing::debug!("running job");
@@ -44,7 +44,7 @@ where
             }
 
             let elapsed = start.elapsed();
-            wait = interval.saturating_sub(elapsed);
+            let mut wait = interval.saturating_sub(elapsed);
             tracing::debug!(
                 "job took: {}ms, waiting: {}ms for next run",
                 elapsed.as_millis(),
@@ -74,7 +74,11 @@ where
 
                         let elapsed = start.elapsed();
                         wait = interval.saturating_sub(elapsed);
-                        tracing::debug!("job took: {}ms, waiting: {}ms for next run", elapsed.as_millis(), wait.as_millis());
+
+                        let now: DateTime<Local> = Local::now();
+                        let next: Option<DateTime<Local>> = std::time::SystemTime::now().checked_add(wait).map(|next| next.into());
+
+                        tracing::debug!(?now, ?next, "job took: {}ms, waiting: {}ms for next run", elapsed.as_millis(), wait.as_millis() );
                     }
 
                 }
