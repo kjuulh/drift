@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-03-27
+
+### Added
+- add next run time
+
+### Fixed
+- *(deps)* update rust crate async-trait to v0.1.87
+- *(deps)* update rust crate async-trait to v0.1.86
+- *(deps)* update rust crate thiserror to v2.0.11
+- *(deps)* update all dependencies
+- *(deps)* update rust crate async-trait to v0.1.85
+- *(deps)* update rust crate thiserror to v2.0.9
+- *(deps)* update rust crate thiserror to v2.0.8
+
+### Other
+- empty commit
+- *(deps)* update all dependencies
+- *(deps)* update rust crate anyhow to v1.0.96
+- *(deps)* update rust crate anyhow to v1.0.95
+- *(deps)* update all dependencies
+- *(deps)* update rust crate tracing to v0.1.41
+- Configure Renovate (#4)
+  Add renovate.json
+
 ## [0.3.0] - 2024-12-13
 
 ### Added
