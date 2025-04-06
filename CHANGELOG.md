@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2025-04-06
+
+### Other
+- *(deps)* update rust crate tokio to v1.44.2
+
 ## [0.3.4] - 2025-03-27
 
 ### Added
