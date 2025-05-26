@@ -132,9 +132,9 @@ where
 
                         tracing::debug!("running job");
                         if let Err(e) = drifter.execute(child_token).await {
-                            tracing::error!("drift job failed with error: {}", e);
                             let elapsed = start.elapsed();
                             wait = interval.saturating_sub(elapsed);
+                            tracing::error!("drift job failed with error: {}, waiting: {}s before trying again", e, wait.as_secs());
                             continue
                         }
 
