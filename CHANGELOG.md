@@ -92,6 +92,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - trigger commit
 - Merge pull request 'chore(release): v0.1.0' (#1) from cuddle-please/release into main
 
-Reviewed-on: https://git.front.kjuulh.io/kjuulh/drift/pulls/1
+Reviewed-on: https://git.kjuulh.io/kjuulh/drift/pulls/1
 
 - *(release)* 0.1.0
