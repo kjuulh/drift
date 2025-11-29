@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-11-29
+
+### Added
+- add readme
+
+### Fixed
+- *(deps)* update all dependencies
+
+### Other
+- *(deps)* update rust crate tracing to v0.1.43
+- *(deps)* update rust crate tokio to v1.46.0
+
 ## [0.3.5] - 2025-05-26
 
 ### Added
