@@ -12,14 +12,89 @@ pub enum DriftError {
     JobError(#[source] anyhow::Error),
 }
 
+/// A scheduled job you can both stop AND wait for.
+///
+/// The `schedule*` functions return a bare [`CancellationToken`], which can ask
+/// a job to stop but cannot tell you when it actually did — the scheduler runs
+/// on a detached task and the handle is dropped. For anything that touches
+/// external state that is not good enough: a caller that cancels and then exits
+/// severs the job mid-write. Awaiting the handle waits for the loop to end,
+/// which includes the currently-executing job.
+///
+/// ```
+/// # use std::time::Duration;
+/// # async fn example() -> anyhow::Result<()> {
+/// let handle = nodrift::schedule_handle(Duration::from_secs(60), || async {
+///     // ... do the work
+///     Ok(())
+/// });
+///
+/// // ... later, on shutdown:
+/// handle.shutdown().await?; // cancel, then wait for the in-flight run
+/// # Ok(())
+/// # }
+/// ```
+#[must_use = "dropping the handle detaches the job; use schedule_drifter if that is what you want"]
+pub struct DriftHandle {
+    cancellation_token: CancellationToken,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl DriftHandle {
+    /// The token driving this job. Cloneable, and cancelling it is equivalent
+    /// to [`DriftHandle::cancel`] — handed out so existing token-based code
+    /// keeps working.
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation_token.clone()
+    }
+
+    /// Ask the job to stop. Returns immediately; the in-flight run may still be
+    /// going. Pair with [`DriftHandle::wait`], or use
+    /// [`DriftHandle::shutdown`].
+    pub fn cancel(&self) {
+        self.cancellation_token.cancel();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_token.is_cancelled()
+    }
+
+    /// Wait for the scheduler to stop, including the job currently running.
+    ///
+    /// Does NOT cancel — on its own this waits forever on a live schedule.
+    /// Cancel first, or use [`DriftHandle::shutdown`].
+    pub async fn wait(self) -> Result<(), tokio::task::JoinError> {
+        self.join.await
+    }
+
+    /// Cancel and wait for the in-flight job to finish. The graceful stop.
+    ///
+    /// Note the job also receives a child of the cancellation token, so a job
+    /// that observes it can wind down early instead of running to completion.
+    pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.cancellation_token.cancel();
+        self.join.await
+    }
+}
+
+/// Schedule `func` every `interval`, detached. See [`schedule_handle`] to be
+/// able to wait for the in-flight run.
 pub fn schedule<F, Fut>(interval: Duration, func: F) -> CancellationToken
 where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
-    let drifter = FuncDrifter::new(func);
+    schedule_handle(interval, func).into_detached_token()
+}
 
-    schedule_drifter(interval, drifter)
+/// Schedule `func` every `interval`, returning a handle that can wait for the
+/// in-flight run to finish. See [`DriftHandle`].
+pub fn schedule_handle<F, Fut>(interval: Duration, func: F) -> DriftHandle
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
+{
+    schedule_drifter_handle(interval, FuncDrifter::new(func))
 }
 
 pub fn schedule_cron<F, Fut>(cron: &str, func: F) -> anyhow::Result<CancellationToken>
@@ -102,14 +177,29 @@ where
 
     Ok(cancellation_token)
 }
+/// Schedule `drifter` every `interval`, detached.
+///
+/// Returns only a [`CancellationToken`], so the caller can stop the job but
+/// cannot wait for it. Prefer [`schedule_drifter_handle`] when the job touches
+/// state that a half-finished run would corrupt.
 pub fn schedule_drifter<FDrifter>(interval: Duration, drifter: FDrifter) -> CancellationToken
+where
+    FDrifter: Drifter + Send + 'static,
+    FDrifter: Clone,
+{
+    schedule_drifter_handle(interval, drifter).into_detached_token()
+}
+
+/// Schedule `drifter` every `interval`, returning a handle that can wait for
+/// the in-flight run to finish. See [`DriftHandle`].
+pub fn schedule_drifter_handle<FDrifter>(interval: Duration, drifter: FDrifter) -> DriftHandle
 where
     FDrifter: Drifter + Send + 'static,
     FDrifter: Clone,
 {
     let cancellation_token = CancellationToken::new();
 
-    tokio::spawn({
+    let join = tokio::spawn({
         let cancellation_token = cancellation_token.clone();
         let drifter = drifter.clone();
 
@@ -152,7 +242,19 @@ where
         }
     });
 
-    cancellation_token
+    DriftHandle {
+        cancellation_token,
+        join,
+    }
+}
+
+impl DriftHandle {
+    /// Drop the join handle, keeping only the token — the pre-handle
+    /// behaviour. Used by the `schedule*` functions that still return a bare
+    /// token, so both APIs share one implementation.
+    fn into_detached_token(self) -> CancellationToken {
+        self.cancellation_token
+    }
 }
 
 struct FuncDrifter<F, Fut>
@@ -258,6 +360,74 @@ mod tests {
 
         let counter = drifter.counter.lock().unwrap();
         assert!(*counter >= 2);
+
+        Ok(())
+    }
+
+    /// A drifter whose job takes a while, so "did shutdown wait for it?" is
+    /// observable rather than a race.
+    #[derive(Default, Clone)]
+    pub struct SlowDrifter {
+        started: Arc<Mutex<usize>>,
+        finished: Arc<Mutex<usize>>,
+    }
+
+    #[async_trait]
+    impl Drifter for SlowDrifter {
+        async fn execute(&self, _cancellation_token: CancellationToken) -> anyhow::Result<()> {
+            *self.started.lock().unwrap() += 1;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            *self.finished.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    /// The point of DriftHandle: after shutdown() returns, the job that was
+    /// running has finished. With a bare CancellationToken the caller could
+    /// only cancel and hope.
+    #[tokio::test]
+    async fn test_shutdown_waits_for_the_running_job() -> anyhow::Result<()> {
+        let drifter = SlowDrifter::default();
+        let handle = schedule_drifter_handle(Duration::from_millis(50), drifter.clone());
+
+        // Let the first job get underway, then stop mid-run.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(*drifter.started.lock().unwrap(), 1);
+        assert_eq!(
+            *drifter.finished.lock().unwrap(),
+            0,
+            "job should still be running, otherwise this test proves nothing"
+        );
+
+        handle.shutdown().await?;
+
+        assert_eq!(
+            *drifter.finished.lock().unwrap(),
+            1,
+            "shutdown must not return before the in-flight job completes"
+        );
+
+        Ok(())
+    }
+
+    /// wait() on its own must not cancel — otherwise callers holding a handle
+    /// for observability would silently stop their own schedule.
+    #[tokio::test]
+    async fn test_wait_does_not_cancel() -> anyhow::Result<()> {
+        let drifter = CounterDrifter::default();
+        let handle = schedule_drifter_handle(Duration::from_millis(30), drifter.clone());
+
+        let token = handle.cancellation_token();
+        assert!(!token.is_cancelled());
+
+        // Waiting forever is the correct behaviour on a live schedule, so only
+        // assert that it does not resolve on its own.
+        let waited = tokio::time::timeout(Duration::from_millis(120), handle.wait()).await;
+        assert!(
+            waited.is_err(),
+            "wait() should not return while the schedule is live"
+        );
+        assert!(!token.is_cancelled(), "wait() must not cancel the schedule");
 
         Ok(())
     }
