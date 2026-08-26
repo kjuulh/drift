@@ -6,6 +6,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-26
+
+### Added
+- `DriftHandle`, returned by the new `schedule_handle` and
+  `schedule_drifter_handle`. Carries the scheduler's `JoinHandle` alongside the
+  cancellation token, so a caller can `shutdown().await` and know the in-flight
+  job has actually finished rather than only that it was asked to stop.
+  `wait()` waits without cancelling; `cancel()` and `cancellation_token()`
+  preserve the previous behaviour.
+- add readme
+
+### Changed
+- [**breaking**] closure jobs now receive the `CancellationToken`. `schedule`,
+  `schedule_handle` and `schedule_cron` take `Fn(CancellationToken) -> Fut`
+  instead of `Fn() -> Fut`. `FuncDrifter` previously accepted the token and
+  discarded it, so a closure job — unlike a `Drifter` impl — could not observe
+  shutdown and always ran to completion, which defeated `DriftHandle::shutdown`
+  for that form specifically. The two forms now behave identically. Callers add
+  a parameter: `|| async { .. }` becomes `|_token| async { .. }`.
+- `schedule` and `schedule_drifter` keep their exact signatures and detached
+  behaviour, now implemented on top of the `*_handle` variants so there is a
+  single scheduling loop rather than two that can drift apart.
+
+### Fixed
+- *(deps)* update all dependencies
+- *(deps)* update rust crate cron to 0.17.0
+- *(deps)* update rust crate chrono to v0.4.45
+- *(deps)* update rust crate cron to 0.16.0
+- *(deps)* update rust crate thiserror to v2.0.18
+- *(deps)* update rust crate tokio-util to v0.7.19
+
+### Other
+- *(deps)* update rust crate tokio to v1.53.1
+- *(deps)* update rust crate anyhow to v1.0.103
+- *(deps)* update rust crate tracing to v0.1.44
+- *(deps)* update rust crate tracing-test to v0.2.6
+
 ## [0.3.5] - 2025-05-26
 
 ### Added
