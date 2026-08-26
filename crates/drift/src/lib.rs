@@ -24,8 +24,12 @@ pub enum DriftError {
 /// ```
 /// # use std::time::Duration;
 /// # async fn example() -> anyhow::Result<()> {
-/// let handle = nodrift::schedule_handle(Duration::from_secs(60), || async {
-///     // ... do the work
+/// let handle = nodrift::schedule_handle(Duration::from_secs(60), |token| async move {
+///     tokio::select! {
+///         _ = do_the_work() => {}
+///         // The job can wind down early instead of running to completion.
+///         _ = token.cancelled() => {}
+///     }
 ///     Ok(())
 /// });
 ///
@@ -33,6 +37,7 @@ pub enum DriftError {
 /// handle.shutdown().await?; // cancel, then wait for the in-flight run
 /// # Ok(())
 /// # }
+/// # async fn do_the_work() {}
 /// ```
 #[must_use = "dropping the handle detaches the job; use schedule_drifter if that is what you want"]
 pub struct DriftHandle {
@@ -81,7 +86,7 @@ impl DriftHandle {
 /// able to wait for the in-flight run.
 pub fn schedule<F, Fut>(interval: Duration, func: F) -> CancellationToken
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     schedule_handle(interval, func).into_detached_token()
@@ -91,7 +96,7 @@ where
 /// in-flight run to finish. See [`DriftHandle`].
 pub fn schedule_handle<F, Fut>(interval: Duration, func: F) -> DriftHandle
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     schedule_drifter_handle(interval, FuncDrifter::new(func))
@@ -99,7 +104,7 @@ where
 
 pub fn schedule_cron<F, Fut>(cron: &str, func: F) -> anyhow::Result<CancellationToken>
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     let drifter = FuncDrifter::new(func);
@@ -259,7 +264,7 @@ impl DriftHandle {
 
 struct FuncDrifter<F, Fut>
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     func: Arc<F>,
@@ -267,7 +272,7 @@ where
 
 impl<F, Fut> Clone for FuncDrifter<F, Fut>
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     fn clone(&self) -> Self {
@@ -279,7 +284,7 @@ where
 
 impl<F, Fut> FuncDrifter<F, Fut>
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn(CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), DriftError>> + Send + 'static,
 {
     fn new(func: F) -> Self {
@@ -288,8 +293,8 @@ where
         }
     }
 
-    async fn execute_func(&self) -> anyhow::Result<()> {
-        if let Err(e) = (self.func)().await {
+    async fn execute_func(&self, token: CancellationToken) -> anyhow::Result<()> {
+        if let Err(e) = (self.func)(token).await {
             anyhow::bail!(e)
         }
 
@@ -300,11 +305,11 @@ where
 #[async_trait]
 impl<F, Fut> Drifter for FuncDrifter<F, Fut>
 where
-    F: Fn() -> Fut + Send + Sync,
+    F: Fn(CancellationToken) -> Fut + Send + Sync,
     Fut: Future<Output = Result<(), DriftError>> + Send,
 {
     async fn execute(&self, token: CancellationToken) -> anyhow::Result<()> {
-        self.execute_func().await?;
+        self.execute_func(token).await?;
 
         Ok(())
     }
@@ -325,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_schedule_jobs() -> anyhow::Result<()> {
-        let token = schedule(Duration::from_millis(50), || async move { Ok(()) });
+        let token = schedule(Duration::from_millis(50), |_token| async move { Ok(()) });
 
         tokio::time::sleep(Duration::from_millis(150)).await;
 
@@ -410,6 +415,87 @@ mod tests {
         Ok(())
     }
 
+    /// PARITY: the closure form must give the same shutdown guarantee as the
+    /// Drifter form. Same scenario as test_shutdown_waits_for_the_running_job,
+    /// expressed through schedule_handle.
+    #[tokio::test]
+    async fn test_shutdown_waits_for_the_running_job_func_variant() -> anyhow::Result<()> {
+        let started = Arc::new(Mutex::new(0usize));
+        let finished = Arc::new(Mutex::new(0usize));
+
+        let handle = schedule_handle(Duration::from_millis(50), {
+            let started = started.clone();
+            let finished = finished.clone();
+            move |_token| {
+                let started = started.clone();
+                let finished = finished.clone();
+                async move {
+                    *started.lock().unwrap() += 1;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    *finished.lock().unwrap() += 1;
+                    Ok(())
+                }
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(*started.lock().unwrap(), 1);
+        assert_eq!(
+            *finished.lock().unwrap(),
+            0,
+            "job should still be running, otherwise this test proves nothing"
+        );
+
+        handle.shutdown().await?;
+
+        assert_eq!(
+            *finished.lock().unwrap(),
+            1,
+            "closure form must wait for the in-flight job, same as the drifter form"
+        );
+
+        Ok(())
+    }
+
+    /// PARITY: a closure job must be able to OBSERVE cancellation and wind down
+    /// early, which it could not before 0.4.0 — FuncDrifter took the token and
+    /// dropped it, so `Fn() -> Fut` had no way to see it.
+    #[tokio::test]
+    async fn test_func_variant_observes_cancellation() -> anyhow::Result<()> {
+        let saw_cancellation = Arc::new(Mutex::new(false));
+
+        let handle = schedule_handle(Duration::from_millis(50), {
+            let saw_cancellation = saw_cancellation.clone();
+            move |token: CancellationToken| {
+                let saw_cancellation = saw_cancellation.clone();
+                async move {
+                    // Long job that exits early when asked to stop.
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+                        _ = token.cancelled() => {
+                            *saw_cancellation.lock().unwrap() = true;
+                        }
+                    }
+                    Ok(())
+                }
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Would hang for 30s if the closure could not see the token.
+        tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
+            .await
+            .expect("shutdown should not wait out the full job")?;
+
+        assert!(
+            *saw_cancellation.lock().unwrap(),
+            "closure must receive a live cancellation token"
+        );
+
+        Ok(())
+    }
+
     /// wait() on its own must not cancel — otherwise callers holding a handle
     /// for observability would silently stop their own schedule.
     #[tokio::test]
@@ -451,7 +537,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_calls_trace_on_start_and_end() -> anyhow::Result<()> {
-        let token = schedule(Duration::from_millis(10), || async {
+        let token = schedule(Duration::from_millis(10), |_token| async {
             tokio::time::sleep(std::time::Duration::from_nanos(1000)).await;
 
             Ok(())
@@ -468,7 +554,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_calls_trace_on_start_and_end_long() -> anyhow::Result<()> {
-        let token = schedule(Duration::from_millis(100), || async {
+        let token = schedule(Duration::from_millis(100), |_token| async {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
             Ok(())
@@ -486,7 +572,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_cron() -> anyhow::Result<()> {
-        let token = schedule_cron("* * * * * *", || async {
+        let token = schedule_cron("* * * * * *", |_token| async {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
             Ok(())
@@ -505,7 +591,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_cron_no_wait() -> anyhow::Result<()> {
-        let token = schedule_cron("* * * * * *", || async { Ok(()) })?;
+        let token = schedule_cron("* * * * * *", |_token| async { Ok(()) })?;
 
         tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -520,7 +606,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_cron_job_taking_longer_than_cycle() -> anyhow::Result<()> {
-        let token = schedule_cron("* * * * * *", || async {
+        let token = schedule_cron("* * * * * *", |_token| async {
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
             Ok(())
