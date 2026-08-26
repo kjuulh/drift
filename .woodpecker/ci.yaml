@@ -1,0 +1,26 @@
+# Test every pull request and push to main.
+#
+# Replaces the old .drone.yml, which loaded the shared cuddle-rust-lib-plan
+# template. Drone is no longer running, so this repo had no working CI at all —
+# a release PR sat open and unmerged from 2025-12-19 while ~30 dependency
+# updates and a feature landed behind it.
+#
+# Mirrors the layout used by kjuulh/gitnow: a ci.yaml gate and a separate
+# release.yaml driven by tags.
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  test:
+    image: rust:1.93-bookworm
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      # --locked so a stale Cargo.lock fails here rather than silently
+      # resolving to different dependencies than a release would.
+      - cargo fmt --all --check
+      - cargo clippy --workspace --all-targets -- -D warnings
+      - cargo test --workspace --locked

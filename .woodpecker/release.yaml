@@ -1,0 +1,57 @@
+# Publish nodrift to crates.io when a `v*` tag is pushed.
+#
+# Releases are tag-driven now, not bot-driven. The old Drone pipeline ran
+# cuddle-please on main, which opened a release PR that bumped the version and
+# wrote the CHANGELOG. That is gone with Drone; rebuilding it here would mean
+# porting cuddle-please and its token into Woodpecker for a single-crate repo.
+# The flow is instead the same one kjuulh/gitnow uses:
+#
+#   1. bump `version` in the workspace Cargo.toml (+ Cargo.lock)
+#   2. write the CHANGELOG entry
+#   3. land on main
+#   4. push `v<version>`
+#
+# Required Woodpecker secret:
+#   cargo_registry_token — crates.io API token, scope publish-update
+#
+# NOTE: if cuddle-please is ever restored, delete the stale
+# `cuddle-please/release` branch first — it still proposes a version that has
+# already been published and tagged.
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+steps:
+  test:
+    image: rust:1.93-bookworm
+    environment:
+      CARGO_TERM_COLOR: always
+    commands:
+      # `cargo publish` compiles the packaged crate but does not run its tests,
+      # so without this a tag could publish code that does not pass.
+      - cargo test --workspace --locked
+
+  publish:
+    image: rust:1.93-bookworm
+    depends_on:
+      - test
+    environment:
+      CARGO_TERM_COLOR: always
+      CARGO_REGISTRY_TOKEN:
+        from_secret: cargo_registry_token
+    commands:
+      # Refuse to publish when the tag and the manifest disagree. This is the
+      # one release mistake that cannot be undone — a crates.io version can be
+      # yanked but the number is burned forever and cannot be re-uploaded.
+      # `$$` escapes the shell variable so Woodpecker does not substitute it.
+      - grep -m1 '^version' Cargo.toml | cut -d'"' -f2 > /tmp/manifest_version
+      - echo "$${CI_COMMIT_TAG#v}" > /tmp/tag_version
+      - |
+        if ! diff -q /tmp/manifest_version /tmp/tag_version; then
+          echo "refusing to publish: tag and Cargo.toml version disagree"
+          echo "  Cargo.toml: $(cat /tmp/manifest_version)"
+          echo "  tag:        $(cat /tmp/tag_version)"
+          exit 1
+        fi
+      - cargo publish -p nodrift --locked
